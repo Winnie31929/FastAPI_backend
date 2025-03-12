@@ -5,6 +5,10 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from io import BytesIO
 from bson import ObjectId
 import time
+from pydantic import BaseModel, EmailStr
+from typing import List
+from datetime import date, datetime
+from passlib.context import CryptContext
 
 app = FastAPI()
 
@@ -12,22 +16,76 @@ app = FastAPI()
 client = AsyncIOMotorClient("mongodb://localhost:27017")
 db = client.get_database("WoundCareApp")  
 collection_wound_records = db["wound_records"]
+collection_users = db["users"]
+collection_ml_predictions = db["ml_predictions"]
 
 # 使用 motor 來建立 GridFS 儲存桶
 fs = AsyncIOMotorGridFSBucket(db)
 
-# 儲存使用者資訊
-@app.post("/add_user/")
-async def add_user(username: str, email: str):
-    """
-    儲存使用者資訊
-    """
-    data = {
-        "name": username,
-        "email": email,
-    }
-    result = await db.users.insert_one(data)
+# 創建加密上下文
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# 生成雜湊密碼
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+# 驗證密碼
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# 定義 Pydantic Model
+class PatientCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    day_of_birth: date
+    phone: str
+    address: str
+    medical_history: List[str] = []
+
+class MedicalStaffCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    day_of_birth: date
+    phone: str
+    address: str
+    patients: List[str] = []
+
+# 儲存病患資訊
+@app.post("/add_patient/")
+async def add_patient(patient: PatientCreate):
+    now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))  # 獲取當前時間
+    now_time = now.strftime('%Y/%m/%d %H:%M:%S')  # 格式化時間，如2021/10/19 14:48:38
+    password_hash = hash_password(patient.password)  # 將密碼加密
+
+    data = dict(patient)  # 將 Pydantic Model 轉換成字典
+    data["password_hash"] = password_hash
+    data["role"] = "patient"
+    data["created_at"] = now_time
+    data["updated_at"] = now_time
+    del data["password"]  # 不儲存明文密碼
+
+    result = await collection_users.insert_one(data)
     return {"inserted_id": str(result.inserted_id)}
+
+# 儲存醫護人員資訊
+@app.post("/add_medical_staff/")
+async def add_medical_staff(staff: MedicalStaffCreate):
+    now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))  # 獲取當前時間
+    now_time = now.strftime('%Y/%m/%d %H:%M:%S')  # 格式化時間，如2021/10/19 14:48:38
+    password_hash = hash_password(staff.password)
+
+    data = dict(staff)
+    data["password_hash"] = password_hash
+    data["role"] = "medical_staff"
+    data["created_at"] = now_time
+    data["updated_at"] = now_time
+    del data["password"]
+
+    result = await collection_users.insert_one(data)
+    return {"inserted_id": str(result.inserted_id)} 
 
 # 儲存傷口紀錄
 @app.post("/add_wound/")

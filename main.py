@@ -1,14 +1,17 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
+from fastapi.exceptions import HTTPException
+from pymongo import ReturnDocument
 import io
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from io import BytesIO
 from bson import ObjectId
 import time
 from pydantic import BaseModel, EmailStr
-from typing import List
-from datetime import date, datetime
+from typing import List, Optional
+import datetime
 from passlib.context import CryptContext
+from datetime import date
 
 app = FastAPI()
 
@@ -33,7 +36,6 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-
 # 定義 Pydantic Model
 class PatientCreate(BaseModel):
     name: str
@@ -43,6 +45,7 @@ class PatientCreate(BaseModel):
     phone: str
     address: str
     medical_history: List[str] = []
+    doctor_id: Optional[str]  # 可選的醫生 ID
 
 class MedicalStaffCreate(BaseModel):
     name: str
@@ -60,15 +63,33 @@ async def add_patient(patient: PatientCreate):
     now_time = now.strftime('%Y/%m/%d %H:%M:%S')  # 格式化時間，如2021/10/19 14:48:38
     password_hash = hash_password(patient.password)  # 將密碼加密
 
+    # 確保 doctor_id 存在於資料庫中的醫生
+    if patient.doctor_id:
+        doctor = await collection_users.find_one({"_id": ObjectId(patient.doctor_id), "role": "medical_staff"})
+        if not doctor:
+            raise HTTPException(status_code=404, detail="指定的醫生不存在")
+
+    # 建立資料
     data = dict(patient)  # 將 Pydantic Model 轉換成字典
     data["password_hash"] = password_hash
+    data["day_of_birth"] = patient.day_of_birth.isoformat()  # 轉換為字串
     data["role"] = "patient"
     data["created_at"] = now_time
     data["updated_at"] = now_time
     del data["password"]  # 不儲存明文密碼
 
+    # 將資料儲存到 MongoDB
     result = await collection_users.insert_one(data)
-    return {"inserted_id": str(result.inserted_id)}
+    patient_id = str(result.inserted_id)
+
+    # 若有指定醫生，將病人加入該醫生的 `patients` 陣列
+    if patient.doctor_id:
+        await collection_users.find_one_and_update(
+            {"_id": ObjectId(patient.doctor_id), "role": "medical_staff"},
+            {"$push": {"patients": patient_id}},  # 將患者 _id 加入醫生的 patients 陣列
+            return_document=ReturnDocument.AFTER
+        )
+    return {"inserted_id": patient_id}
 
 # 儲存醫護人員資訊
 @app.post("/add_medical_staff/")
@@ -79,13 +100,14 @@ async def add_medical_staff(staff: MedicalStaffCreate):
 
     data = dict(staff)
     data["password_hash"] = password_hash
+    data["day_of_birth"] = staff.day_of_birth.isoformat()  # 轉換為字串
     data["role"] = "medical_staff"
     data["created_at"] = now_time
     data["updated_at"] = now_time
     del data["password"]
 
     result = await collection_users.insert_one(data)
-    return {"inserted_id": str(result.inserted_id)} 
+    return {"inserted_id": str(result.inserted_id)}
 
 # 儲存傷口紀錄
 @app.post("/add_wound/")

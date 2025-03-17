@@ -7,20 +7,22 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from io import BytesIO
 from bson import ObjectId
 import time
-from pydantic import BaseModel, EmailStr
-from typing import List, Optional
-import datetime
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import Optional
 from passlib.context import CryptContext
-from datetime import date
+import datetime as dt
+from datetime import date, datetime
+import re
 
 app = FastAPI()
 
 # 使用 motor 進行非同步連線
 client = AsyncIOMotorClient("mongodb://localhost:27017")
 db = client.get_database("WoundCareApp")  
-collection_wound_records = db["wound_records"]
-collection_users = db["users"]
-collection_ml_predictions = db["ml_predictions"]
+collection_wound_records = db["Wound_Records"]
+collection_users = db["Users"]
+collection_ml_predictions = db["ML_Predictions"]
+collection_doctor_patient = db["Doctor_Patient"]
 
 # 使用 motor 來建立 GridFS 儲存桶
 fs = AsyncIOMotorGridFSBucket(db)
@@ -36,44 +38,55 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
+
+# 手機號碼正則表達式：09開頭，後面接8位數字
+PHONE_REGEX = r"^09\d{8}$"
+
 # 定義 Pydantic Model
-class PatientCreate(BaseModel):
-    name: str
+class UserCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8)
     day_of_birth: date
-    phone: str
-    address: str
-    medical_history: List[str] = []
-    doctor_id: Optional[str]  # 可選的醫生 ID
+    phone: str = Field(..., pattern=PHONE_REGEX)
+    address: Optional[str] = None
+    medical_history: Optional[str] = None
+    role: str
 
-class MedicalStaffCreate(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    day_of_birth: date
-    phone: str
-    address: str
-    patients: List[str] = []
+    # 密碼：至少8字元，包含大寫、小寫、數字，可有特殊符號
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value):
+        """檢查密碼是否符合強度要求"""
+        if not re.search(r"[a-z]", value):
+            raise ValueError("密碼必須包含至少一個小寫字母")
+        if not re.search(r"[A-Z]", value):
+            raise ValueError("密碼必須包含至少一個大寫字母")
+        if not re.search(r"\d", value):
+            raise ValueError("密碼必須包含至少一個數字")
+        return value
 
-# 儲存病患資訊
-@app.post("/add_patient/")
-async def add_patient(patient: PatientCreate):
-    now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))  # 獲取當前時間
-    now_time = now.strftime('%Y/%m/%d %H:%M:%S')  # 格式化時間，如2021/10/19 14:48:38
-    password_hash = hash_password(patient.password)  # 將密碼加密
+    
 
-    # 確保 doctor_id 存在於資料庫中的醫生
-    if patient.doctor_id:
-        doctor = await collection_users.find_one({"_id": ObjectId(patient.doctor_id), "role": "medical_staff"})
+# 儲存使用者資訊
+@app.post("/add_user/")
+async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
+    now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
+    password_hash = hash_password(user.password)  # 將密碼加密
+
+    # 轉換 `day_of_birth` 為 `datetime.datetime`
+    day_of_birth_dt = datetime(user.day_of_birth.year, user.day_of_birth.month, user.day_of_birth.day)
+
+    # 確保 doctor_id 存在於資料庫
+    if doctor_id:
+        doctor = await collection_users.find_one({"_id": ObjectId(doctor_id), "role": "medical_staff"})
         if not doctor:
             raise HTTPException(status_code=404, detail="指定的醫生不存在")
 
     # 建立資料
-    data = dict(patient)  # 將 Pydantic Model 轉換成字典
+    data = dict(user)  # 將 Pydantic Model 轉換成字典
     data["password_hash"] = password_hash
-    data["day_of_birth"] = patient.day_of_birth.isoformat()  # 轉換為字串
-    data["role"] = "patient"
+    data["day_of_birth"] = day_of_birth_dt
     data["created_at"] = now_time
     data["updated_at"] = now_time
     del data["password"]  # 不儲存明文密碼
@@ -82,32 +95,15 @@ async def add_patient(patient: PatientCreate):
     result = await collection_users.insert_one(data)
     patient_id = str(result.inserted_id)
 
-    # 若有指定醫生，將病人加入該醫生的 `patients` 陣列
-    if patient.doctor_id:
-        await collection_users.find_one_and_update(
-            {"_id": ObjectId(patient.doctor_id), "role": "medical_staff"},
-            {"$push": {"patients": patient_id}},  # 將患者 _id 加入醫生的 patients 陣列
-            return_document=ReturnDocument.AFTER
-        )
+    # 如果有指定醫生，則建立醫生與病人的關係
+    if doctor_id:
+        doctor_patient_data = {
+            "doctor_id": doctor_id,
+            "patient_id": patient_id,
+            "assigned_date": now_time,
+        }
+        await collection_doctor_patient.insert_one(doctor_patient_data)
     return {"inserted_id": patient_id}
-
-# 儲存醫護人員資訊
-@app.post("/add_medical_staff/")
-async def add_medical_staff(staff: MedicalStaffCreate):
-    now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))  # 獲取當前時間
-    now_time = now.strftime('%Y/%m/%d %H:%M:%S')  # 格式化時間，如2021/10/19 14:48:38
-    password_hash = hash_password(staff.password)
-
-    data = dict(staff)
-    data["password_hash"] = password_hash
-    data["day_of_birth"] = staff.day_of_birth.isoformat()  # 轉換為字串
-    data["role"] = "medical_staff"
-    data["created_at"] = now_time
-    data["updated_at"] = now_time
-    del data["password"]
-
-    result = await collection_users.insert_one(data)
-    return {"inserted_id": str(result.inserted_id)}
 
 # 儲存傷口紀錄
 @app.post("/add_wound/")

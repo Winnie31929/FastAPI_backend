@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from fastapi.exceptions import HTTPException
 from pymongo import ReturnDocument
@@ -13,6 +13,7 @@ from passlib.context import CryptContext
 import datetime as dt
 from datetime import date, datetime
 import re
+import json
 
 app = FastAPI()
 
@@ -66,11 +67,13 @@ class UserCreate(BaseModel):
             raise ValueError("密碼必須包含至少一個數字")
         return value
 
-    
 
 # 儲存使用者資訊
 @app.post("/add_user/")
 async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
+    """
+    儲存使用者資訊到 MongoDB
+    """
     now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
     password_hash = hash_password(user.password)  # 將密碼加密
 
@@ -107,19 +110,14 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
 
 # 儲存傷口紀錄
 @app.post("/add_wound/")
-async def add_wound(file: UploadFile = File(...)):
+async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     """
-    接收 JSON 數據和圖片，並存入 MongoDB 和 GridFS
+    接收JSON數據和圖片，並存入 MongoDB 和 GridFS
     """
-    now_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.localtime())  # 獲取當前時間
-    data = {
-        "patient_id": str(ObjectId()),
-        "wound_type": "Diabetic Ulcer",
-        "wound_location": "Foot",
-        "notes": " ",
-        "created_at": now_time,
-        "updated_at": now_time,
-    }
+    now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
+    wound_data = json.loads(wound_json)  # 將 json 轉換成字典
+    wound_data["created_at"] = now_time
+    wound_data["updated_at"] = now_time
     # 儲存圖片到 GridFS
     image_data = await file.read()  # 讀取圖片檔案
     image_stream = BytesIO(image_data)  # 將圖片轉成二進位流
@@ -128,10 +126,10 @@ async def add_wound(file: UploadFile = File(...)):
     file_id = await fs.upload_from_stream(filename=file.filename, source=image_stream) 
 
     # 將圖片的 GridFS file_id 加入傷口記錄
-    data["image_file_id"] = str(file_id)
+    wound_data["image_file_id"] = str(file_id)
 
     # 儲存傷口記錄到 MongoDB
-    result = await collection_wound_records.insert_one(data)
+    result = await collection_wound_records.insert_one(wound_data)
 
     return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
 

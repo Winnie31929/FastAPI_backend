@@ -67,6 +67,13 @@ class UserCreate(BaseModel):
             raise ValueError("密碼必須包含至少一個數字")
         return value
 
+# Pydantic Model
+class CorrectionRequest(BaseModel):
+    corrected_by: str # 醫生 ID
+    wound_id: str # 要改的傷口紀錄 ID
+    corrected_class: Optional[str]  # 修改的傷口類別
+    corrected_severity: Optional[str]  # 修改的傷口嚴重程度
+    corrected_treatment_suggestions: Optional[str]  # 修改的治療建議
 
 # 儲存使用者資訊
 @app.post("/add_user/")
@@ -109,10 +116,11 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
     return {"inserted_id": patient_id}
 
 # 儲存傷口紀錄
+# {"patient_id":"67d796801cc030761516faa5","wound_location":"小腿"}
 @app.post("/add_wound/")
 async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     """
-    接收JSON數據和圖片，並存入 MongoDB 和 GridFS
+    儲存傷口紀錄，接收JSON數據和圖片，並存入 MongoDB 和 GridFS
     """
     now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
     wound_data = json.loads(wound_json)  # 將 json 轉換成字典
@@ -132,6 +140,64 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     result = await collection_wound_records.insert_one(wound_data)
 
     return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
+
+# 儲存 ML 預測結果
+"""
+{
+    "wound_id": ,
+    "model_version": ,
+    "predicted_class": ,
+    "predicted_severity": ,
+    "predicted_treatment_suggestions": 
+}
+"""
+@app.post("/add_ml_prediction/")
+async def add_ml_prediction(prediction_json: str = Form(...), file: UploadFile = File(...)):
+    """
+    儲存ML預測結果，接收JSON數據和圖片，並存入 MongoDB 和 GridFS
+    """
+    now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
+    prediction_data = json.loads(prediction_json)  # 將 json 轉換成字典
+    prediction_data["predicted_date"] = now_time
+
+    # 儲存已框出傷口邊界的圖片到 GridFS
+    image_data = await file.read()  # 讀取圖片檔案
+    image_stream = BytesIO(image_data)  # 將圖片轉成二進位流
+
+    # 上傳圖片至 GridFS
+    file_id = await fs.upload_from_stream(filename=file.filename, source=image_stream) 
+
+    # 將圖片的 GridFS file_id 加入傷口記錄
+    prediction_data["predicted_image_file_id"] = str(file_id)
+
+    # 儲存ML預測結果到 MongoDB
+    result = await collection_ml_predictions.insert_one(prediction_data)
+
+    return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
+
+# ML預測結果加入醫生更正資訊
+@app.post("/correct_ml_prediction/")
+async def correct_ml_prediction(correction: CorrectionRequest):
+    """
+    ML預測結果加入醫生更正資訊
+    """
+    # 查找 wound_id 是否存在
+    prediction = await collection_ml_predictions.find_one({"wound_id": correction.wound_id})
+
+    if not prediction:
+        raise HTTPException(status_code=404, detail="Wound ID not found in Ml_prediction")
+
+    now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
+    correction_data = dict(correction)
+    correction_data["corrected_date"] = now_time
+
+    # 更新 MongoDB 記錄
+    await collection_ml_predictions.update_one(
+        {"wound_id": correction.wound_id}, {"$set": correction_data}
+    )
+
+    return {"message": "Add correct information successfully"}
+    
 
 @app.get("/get_wounds/")
 async def get_wounds():

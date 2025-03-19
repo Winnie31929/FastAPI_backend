@@ -71,9 +71,9 @@ class UserCreate(BaseModel):
 class CorrectionRequest(BaseModel):
     corrected_by: str # 醫生 ID
     wound_id: str # 要改的傷口紀錄 ID
-    corrected_class: Optional[str]  # 修改的傷口類別
-    corrected_severity: Optional[str]  # 修改的傷口嚴重程度
-    corrected_treatment_suggestions: Optional[str]  # 修改的治療建議
+    corrected_class: Optional[str] = None # 修改的傷口類別
+    corrected_severity: Optional[str]  = None# 修改的傷口嚴重程度
+    corrected_treatment_suggestions: Optional[str] = None # 修改的治療建議
 
 # 儲存使用者資訊
 @app.post("/add_user/")
@@ -197,7 +197,7 @@ async def correct_ml_prediction(correction: CorrectionRequest):
     )
 
     return {"message": "Add correct information successfully"}
-
+# 獲取醫生所有的病患名字
 @app.get("/get_patients/{doctor_id}")
 async def get_patients(doctor_id: str):
     """
@@ -221,9 +221,9 @@ async def get_patients(doctor_id: str):
     ).to_list(length=100)
 
     return {"patients": patients}
-
-@app.get("/get_wounds/{patient_id}")
-async def get_wounds(patient_id: str):
+# 根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
+@app.get("/get_wound_list/{patient_id}")
+async def get_wound_list(patient_id: str):
     """
     根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
     """
@@ -241,7 +241,20 @@ async def get_wounds(patient_id: str):
     ).to_list(length=100)
 
     return {"data": ml_predictions}
+# 根據傷口ID，獲取ML預測結果
+@app.get("/get_predicted_result/{wound_id}")
+async def get_predicted_result(wound_id: str):
+    """
+    根據傷口ID，獲取ML預測結果
+    """
+    # 1. 查詢 ML 預測結果
+    prediction = await collection_ml_predictions.find_one({"wound_id": wound_id}, {"_id": 0})
+    if not prediction:
+        raise HTTPException(status_code=404, detail="No ML prediction found for this wound")
 
+    return prediction
+
+# 根據圖片的 file_id 從 GridFS 下載圖片
 @app.get("/get_wound_image/{file_id}")
 async def get_wound_image(file_id: str):
     """

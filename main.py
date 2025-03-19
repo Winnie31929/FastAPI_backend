@@ -116,7 +116,7 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
     return {"inserted_id": patient_id}
 
 # 儲存傷口紀錄
-# {"patient_id":"67d796801cc030761516faa5","wound_location":"小腿"}
+# {"patient_id":"67d796801cc030761516faa5","title": "右腳掌傷口1","wound_location":"右腳掌"}
 @app.post("/add_wound/")
 async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     """
@@ -144,11 +144,11 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
 # 儲存 ML 預測結果
 """
 {
-    "wound_id": ,
-    "model_version": ,
-    "predicted_class": ,
-    "predicted_severity": ,
-    "predicted_treatment_suggestions": 
+    "wound_id": "67da78f1bd148b1bd6b8d866",
+    "model_version": "v1",
+    "predicted_class": "N",
+    "predicted_severity": "W0",
+    "predicted_treatment_suggestions": "No"
 }
 """
 @app.post("/add_ml_prediction/")
@@ -222,13 +222,25 @@ async def get_patients(doctor_id: str):
 
     return {"patients": patients}
 
-@app.get("/get_wounds/")
-async def get_wounds():
+@app.get("/get_wounds/{patient_id}")
+async def get_wounds(patient_id: str):
     """
-    獲取所有傷口記錄（不包含圖片）
+    根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
     """
-    records = await collection_wound_records.find({}, {"_id": 0}).to_list(length=100)
-    return {"data": records}
+    # 1. 查詢病患的所有傷口記錄
+    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1}).to_list(length=100)
+    if not records:
+        raise HTTPException(status_code=404, detail="No wound records found for this patient")
+    
+    # 取得 wound_id 清單
+    wound_ids = [str(r["_id"]) for r in records]
+
+    # 2. 透過 wound_id 查詢 ML 預測結果
+    ml_predictions = await collection_ml_predictions.find(
+        {"wound_id": {"$in": wound_ids}}, {"_id": 0, "predicted_class": 1, "predicted_severity": 1, "predicted_date": 1}
+    ).to_list(length=100)
+
+    return {"data": ml_predictions}
 
 @app.get("/get_wound_image/{file_id}")
 async def get_wound_image(file_id: str):

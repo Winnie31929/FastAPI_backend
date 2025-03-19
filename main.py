@@ -197,7 +197,30 @@ async def correct_ml_prediction(correction: CorrectionRequest):
     )
 
     return {"message": "Add correct information successfully"}
-    
+
+@app.get("/get_patients/{doctor_id}")
+async def get_patients(doctor_id: str):
+    """
+    獲取醫生所有的病患名字
+    """
+    # 1. 查詢病患 ID
+    patient_ids = await collection_doctor_patient.find(
+        {"doctor_id": doctor_id}, {"_id": 0, "patient_id": 1}
+    ).to_list(length=100)
+
+    # 取得 patient_id 清單
+    patient_ids = [p["patient_id"] for p in patient_ids]
+    if not patient_ids:
+        raise HTTPException(status_code=404, detail="No patients found for this doctor")
+
+    # 轉換 patient_id 為 ObjectId
+    patient_object_ids = [ObjectId(patient_id) for patient_id in patient_ids]
+    # 2. 透過 patient_id 查詢病患名字
+    patients = await collection_users.find(
+        {"_id": {"$in": patient_object_ids}}, {"_id": 0, "name": 1}
+    ).to_list(length=100)
+
+    return {"patients": patients}
 
 @app.get("/get_wounds/")
 async def get_wounds():

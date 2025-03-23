@@ -45,6 +45,7 @@ PHONE_REGEX = r"^09\d{8}$"
 
 # 定義 Pydantic Model
 class UserCreate(BaseModel):
+    account: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     password: str = Field(..., min_length=8)
@@ -252,11 +253,11 @@ async def change_password(user_id: str, request: ChangePasswordRequest):
 
 # 使用者登入
 @app.post("/login/")
-async def login(email: str = Form(...), password: str = Form(...)):
+async def login(account: str = Form(...), password: str = Form(...)):
     """
     使用者登入
     """
-    user = await collection_users.find_one({"email": email})
+    user = await collection_users.find_one({"account": account})
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
 

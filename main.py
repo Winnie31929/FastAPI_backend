@@ -115,6 +115,55 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
         await collection_doctor_patient.insert_one(doctor_patient_data)
     return {"inserted_id": patient_id}
 
+# 根據姓名、生日或電話號碼搜尋病人
+@app.get("/search_patient/")
+async def search_patient(name: Optional[str] = None, day_of_birth: Optional[date] = None, phone: Optional[str] = None):
+    """
+    根據姓名、生日或電話號碼搜尋病人
+    """
+    # 組合查詢條件
+    query = {}
+    if name:
+        query["name"] = name
+    if day_of_birth:
+        query["day_of_birth"] = datetime(day_of_birth.year, day_of_birth.month, day_of_birth.day)
+    if phone:
+        query["phone"] = phone
+
+    # 查詢病人
+    patients_list = []
+    async for patient in collection_users.find(query):
+        patient["_id"] = str(patient["_id"])  # 轉換 ObjectId
+        patients_list.append(patient)
+
+    return {"patients": patients_list}
+
+# 醫生搜尋病人並新增關係
+@app.post("/add_doctor_patient/")
+async def add_doctor_patient(doctor_id: str, patient_id: str):
+    """
+    醫生搜尋病人並新增關係
+    """
+    # 確保 doctor_id 和 patient_id 是合法的 MongoDB ObjectId
+    if not ObjectId.is_valid(doctor_id) or not ObjectId.is_valid(patient_id):
+        raise HTTPException(status_code=400, detail="無效的 doctor_id 或 patient_id")
+
+    # 確保 doctor_id 和 patient_id 存在於資料庫
+    doctor = await collection_users.find_one({"_id": ObjectId(doctor_id), "role": "medical_staff"})
+    patient = await collection_users.find_one({"_id": ObjectId(patient_id), "role": "patient"})
+    if not doctor or not patient:
+        raise HTTPException(status_code=404, detail="指定的醫生或病人不存在")
+
+    # 建立醫生與病人的關係
+    doctor_patient_data = {
+        "doctor_id": doctor_id,
+        "patient_id": patient_id,
+        "assigned_date": datetime.now(tz=dt.timezone(dt.timedelta(hours=8))),
+    }
+    result = await collection_doctor_patient.insert_one(doctor_patient_data)
+
+    return {"inserted_id": str(result.inserted_id)}
+
 
 # 更新使用者資訊的 Pydantic Model
 class UserUpdate(BaseModel):

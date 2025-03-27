@@ -61,11 +61,11 @@ class UserCreate(BaseModel):
     def validate_password(cls, value):
         """檢查密碼是否符合強度要求"""
         if not re.search(r"[a-z]", value):
-            raise ValueError("密碼必須包含至少一個小寫字母")
+            raise ValueError("Password must contain at least one lowercase letter.")
         if not re.search(r"[A-Z]", value):
-            raise ValueError("密碼必須包含至少一個大寫字母")
+            raise ValueError("passwords must contain at least one upper case letter.")
         if not re.search(r"\d", value):
-            raise ValueError("密碼必須包含至少一個數字")
+            raise ValueError("Password must contain at least one number.")
         return value
 
 # Pydantic Model
@@ -78,7 +78,7 @@ class CorrectionRequest(BaseModel):
 
 # 儲存使用者資訊
 @app.post("/add_user/")
-async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
+async def add_patient(user: UserCreate):
     """
     儲存使用者資訊到 MongoDB
     """
@@ -87,12 +87,6 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
 
     # 轉換 `day_of_birth` 為 `datetime.datetime`
     day_of_birth_dt = datetime(user.day_of_birth.year, user.day_of_birth.month, user.day_of_birth.day)
-
-    # 確保 doctor_id 存在於資料庫
-    if doctor_id:
-        doctor = await collection_users.find_one({"_id": ObjectId(doctor_id), "role": "medical_staff"})
-        if not doctor:
-            raise HTTPException(status_code=404, detail="指定的醫生不存在")
 
     # 建立資料
     data = dict(user)  # 將 Pydantic Model 轉換成字典
@@ -105,15 +99,6 @@ async def add_patient(user: UserCreate, doctor_id: Optional[str] = None):
     # 將資料儲存到 MongoDB
     result = await collection_users.insert_one(data)
     patient_id = str(result.inserted_id)
-
-    # 如果有指定醫生，則建立醫生與病人的關係
-    if doctor_id:
-        doctor_patient_data = {
-            "doctor_id": doctor_id,
-            "patient_id": patient_id,
-            "assigned_date": now_time,
-        }
-        await collection_doctor_patient.insert_one(doctor_patient_data)
     return {"inserted_id": patient_id}
 
 # 根據姓名、生日或電話號碼搜尋病人
@@ -147,13 +132,13 @@ async def add_doctor_patient(doctor_id: str, patient_id: str):
     """
     # 確保 doctor_id 和 patient_id 是合法的 MongoDB ObjectId
     if not ObjectId.is_valid(doctor_id) or not ObjectId.is_valid(patient_id):
-        raise HTTPException(status_code=400, detail="無效的 doctor_id 或 patient_id")
+        raise HTTPException(status_code=400, detail="Invalid doctor_id or patient_id.")
 
     # 確保 doctor_id 和 patient_id 存在於資料庫
     doctor = await collection_users.find_one({"_id": ObjectId(doctor_id), "role": "medical_staff"})
     patient = await collection_users.find_one({"_id": ObjectId(patient_id), "role": "patient"})
     if not doctor or not patient:
-        raise HTTPException(status_code=404, detail="指定的醫生或病人不存在")
+        raise HTTPException(status_code=404, detail="The specified doctor or patient does not exist.")
 
     # 建立醫生與病人的關係
     doctor_patient_data = {
@@ -180,11 +165,11 @@ async def update_user(user_id: str, update_data: UserUpdate):
 
     # 確保 user_id 是合法的 MongoDB ObjectId
     if not ObjectId.is_valid(user_id):
-        raise HTTPException(status_code=400, detail="無效的 user_id")
+        raise HTTPException(status_code=400, detail="Invalid user_id")
 
     user = await collection_users.find_one({"_id": ObjectId(user_id)})
     if not user:
-        raise HTTPException(status_code=404, detail="使用者不存在")
+        raise HTTPException(status_code=404, detail="User does not exist.")
 
     # 轉換更新資料為字典
     update_dict = dict(update_data)
@@ -198,7 +183,7 @@ async def update_user(user_id: str, update_data: UserUpdate):
         {"$set": update_dict}
     )
 
-    return {"message": "使用者資料已更新"}
+    return {"message": "User information updated."}
 
 # Pydantic Model: 修改密碼請求
 class ChangePasswordRequest(BaseModel):
@@ -210,11 +195,11 @@ class ChangePasswordRequest(BaseModel):
     def validate_password(cls, value):
         """檢查密碼是否符合強度要求"""
         if not re.search(r"[a-z]", value):
-            raise ValueError("密碼必須包含至少一個小寫字母")
+            raise ValueError("Password must contain at least one lowercase letter.")
         if not re.search(r"[A-Z]", value):
-            raise ValueError("密碼必須包含至少一個大寫字母")
+            raise ValueError("passwords must contain at least one upper case letter.")
         if not re.search(r"\d", value):
-            raise ValueError("密碼必須包含至少一個數字")
+            raise ValueError("Password must contain at least one number.")
         return value
 
 
@@ -225,19 +210,19 @@ async def change_password(user_id: str, request: ChangePasswordRequest):
 
     # 確保 user_id 是合法的 MongoDB ObjectId
     if not ObjectId.is_valid(user_id):
-        raise HTTPException(status_code=400, detail="無效的 user_id")
+        raise HTTPException(status_code=400, detail="Invalid user_id")
 
     user = await collection_users.find_one({"_id": ObjectId(user_id)})
     if not user:
-        raise HTTPException(status_code=404, detail="使用者不存在")
+        raise HTTPException(status_code=404, detail="User does not exist.")
 
     # 檢查舊密碼是否正確
     if not verify_password(request.old_password, user["password_hash"]):
-        raise HTTPException(status_code=403, detail="舊密碼不正確")
+        raise HTTPException(status_code=403, detail="The old password is incorrect.")
 
     # 檢查新密碼與確認密碼是否相符
     if request.new_password != request.confirm_new_password:
-        raise HTTPException(status_code=400, detail="新密碼與確認密碼不一致")
+        raise HTTPException(status_code=400, detail="The new password and the confirmed password do not match.")
 
     # 檢查密碼強度
     ChangePasswordRequest.validate_password(request.new_password)
@@ -249,23 +234,30 @@ async def change_password(user_id: str, request: ChangePasswordRequest):
         {"$set": {"password_hash": new_password_hash, "updated_at": datetime.now()}}
     )
 
-    return {"message": "密碼已成功更新"}
+    return {"message": "Password updated successfully."}
 
 # 使用者登入
 @app.post("/login/")
-async def login(account: str = Form(...), password: str = Form(...)):
+async def login(account: str = Form(...), password: str = Form(...), role: str = Form(...)):
     """
     使用者登入
     """
     user = await collection_users.find_one({"account": account})
     if not user:
-        raise HTTPException(status_code=404, detail="使用者不存在")
+        raise HTTPException(status_code=404, detail="User does not exist.")
 
     # 驗證密碼
     if not verify_password(password, user["password_hash"]):
-        raise HTTPException(status_code=400, detail="密碼錯誤")
+        raise HTTPException(status_code=400, detail="Wrong password")
 
-    return {"message": "登入成功"}
+    # 驗證角色
+    if user["role"] != role:
+        error_message = f"Not {role}. Please use the correct login channel."
+        raise HTTPException(status_code=400, detail=error_message)
+    
+    if role == "medical_staff":
+        return {"message": "Doctor logged in successfully."}
+    return {"message": "User logged in successfully."}
 
 # 儲存傷口紀錄
 # {"patient_id":"67d796801cc030761516faa5","title": "右腳掌傷口1","wound_location":"右腳掌"}
@@ -300,11 +292,11 @@ async def update_wound(wound_id: str, update_data: dict):
 
     # 確保 wound_id 是合法的 MongoDB ObjectId
     if not ObjectId.is_valid(wound_id):
-        raise HTTPException(status_code=400, detail="無效的 wound_id")
+        raise HTTPException(status_code=400, detail="Invalid wound_id")
 
     wound = await collection_wound_records.find_one({"_id": ObjectId(wound_id)})
     if not wound:
-        raise HTTPException(status_code=404, detail="傷口紀錄不存在")
+        raise HTTPException(status_code=404, detail="Wound record does not exist.")
 
     # 轉換更新資料為字典
     update_dict = dict(update_data)
@@ -318,7 +310,7 @@ async def update_wound(wound_id: str, update_data: dict):
         {"$set": update_dict}
     )
 
-    return {"message": "傷口紀錄已更新"}
+    return {"message": "Wound record updated."}
 
 # 儲存 ML 預測結果
 """
@@ -399,7 +391,10 @@ async def get_patients(doctor_id: str):
     patients = await collection_users.find(
         {"_id": {"$in": patient_object_ids}}, {"_id": 0, "name": 1}
     ).to_list(length=100)
-
+    # 3. 加入病患 ID
+    for i in range(len(patients)):
+        patients[i]["patient_id"] = patient_ids[i]
+        
     return {"patients": patients}
 
 # 根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
@@ -409,17 +404,29 @@ async def get_wound_list(patient_id: str):
     根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
     """
     # 1. 查詢病患的所有傷口記錄
-    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1}).to_list(length=100)
+    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1, "title": 1}).to_list(length=100)
     if not records:
         raise HTTPException(status_code=404, detail="No wound records found for this patient")
     
+    # 取得 title
+    wound_titles = [str(r["title"]) for r in records]
     # 取得 wound_id 清單
     wound_ids = [str(r["_id"]) for r in records]
 
     # 2. 透過 wound_id 查詢 ML 預測結果
     ml_predictions = await collection_ml_predictions.find(
-        {"wound_id": {"$in": wound_ids}}, {"_id": 0, "predicted_class": 1, "predicted_severity": 1, "predicted_date": 1}
+        {"wound_id": {"$in": wound_ids}},
+        {
+            "_id": 0,
+            "class": {"$ifNull": ["$corrected_class", "$predicted_class"]},
+            "severity": {"$ifNull": ["$corrected_severity", "$predicted_severity"]},
+            "predicted_date": 1
+        }
     ).to_list(length=100)
+
+    # 3. title 和 ML 預測結果合併
+    for i in range(len(ml_predictions)):
+        ml_predictions[i]["title"] = wound_titles[i]
 
     return {"data": ml_predictions}
 

@@ -1,20 +1,20 @@
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile, Form, Depends, Security
 from fastapi.responses import StreamingResponse
 from fastapi.exceptions import HTTPException
-from pymongo import ReturnDocument
+from fastapi.security import OAuth2PasswordBearer
 import io
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from io import BytesIO
 from bson import ObjectId
-import time
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from passlib.context import CryptContext
 import datetime as dt
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 import json
-#test
+import jwt
+
 app = FastAPI()
 
 # 使用 motor 進行非同步連線
@@ -28,6 +28,12 @@ collection_doctor_patient = db["Doctor_Patient"]
 # 使用 motor 來建立 GridFS 儲存桶
 fs = AsyncIOMotorGridFSBucket(db)
 
+
+# JWT 相關設定
+SECRET_KEY = "your_secret_key"  # 設定一個強壯的密鑰
+ALGORITHM = "HS256"  # 使用 HS256 加密算法
+ACCESS_TOKEN_EXPIRE_MINUTES = 120  # 設定 Token 有效時間
+
 # 創建加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -39,6 +45,15 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
+# OAuth2PasswordBearer 用於接收前端傳來的 JWT Token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+# 產生 JWT Token
+def create_access_token(data: dict, expires_delta: timedelta):
+    to_encode = data.copy()
+    expire = datetime.now() + expires_delta
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # 手機號碼正則表達式：09開頭，後面接8位數字
 PHONE_REGEX = r"^09\d{8}$"
@@ -236,26 +251,31 @@ async def change_password(user_id: str, request: ChangePasswordRequest):
 
     return {"message": "Password updated successfully."}
 
+class LoginRequest(BaseModel):
+    account: str
+    pw_login: str
+    role: str
+
 # 使用者登入
 @app.post("/login/")
-async def login(account: str = Form(...), password: str = Form(...), role: str = Form(...)):
+async def login(request: LoginRequest):
     """
     使用者登入
     """
-    user = await collection_users.find_one({"account": account})
+    user = await collection_users.find_one({"account": request.account})
     if not user:
         raise HTTPException(status_code=404, detail="User does not exist.")
 
     # 驗證密碼
-    if not verify_password(password, user["password_hash"]):
+    if not verify_password(request.pw_login, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Wrong password")
 
     # 驗證角色
-    if user["role"] != role:
-        error_message = f"Not {role}. Please use the correct login channel."
+    if user["role"] != request.role:
+        error_message = f"Not {request.role}. Please use the correct login channel."
         raise HTTPException(status_code=400, detail=error_message)
     
-    if role == "medical_staff":
+    if request.role == "medical_staff":
         return {"message": "Doctor logged in successfully."}
     return {"message": "User logged in successfully."}
 
@@ -315,7 +335,7 @@ async def update_wound(wound_id: str, update_data: dict):
 # 儲存 ML 預測結果
 """
 {
-    "wound_id": "67da78f1bd148b1bd6b8d866",
+    "wound_id": "67e54403282c561c2f8c0ffe",
     "model_version": "v1",
     "predicted_class": "N",
     "predicted_severity": "W0",

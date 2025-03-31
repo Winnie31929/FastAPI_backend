@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 import re
 import json
 import jwt
-
+from jwt import PyJWTError
 app = FastAPI()
 
 # 使用 motor 進行非同步連線
@@ -49,11 +49,31 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # 產生 JWT Token
-def create_access_token(data: dict, expires_delta: timedelta):
+def create_access_token(data: dict):
+    expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = data.copy()
-    expire = datetime.now() + expires_delta
+    expire = datetime.now(dt.timezone.utc) + expires_delta
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_jwt_token(token: str = Depends(oauth2_scheme)):
+    """ 驗證 JWT Token 是否有效 """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        role: str = payload.get("role")
+        if user_id is None or role is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return {"user_id": user_id, "role": role}
+
+    except PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+@app.get("/protected/")
+async def protected_route(user_data: dict = Depends(verify_jwt_token)):
+    """ 需要登入的 API """
+    return {"message": f"Hello, {user_data['username']}! Your role is {user_data['role']}."}
 
 # 手機號碼正則表達式：09開頭，後面接8位數字
 PHONE_REGEX = r"^09\d{8}$"
@@ -275,9 +295,11 @@ async def login(request: LoginRequest):
         error_message = f"Not {request.role}. Please use the correct login channel."
         raise HTTPException(status_code=400, detail=error_message)
     
-    if request.role == "medical_staff":
-        return {"message": "Doctor logged in successfully."}
-    return {"message": "User logged in successfully."}
+    user_id = str(user["_id"])
+     # 產生 JWT Token
+    token = create_access_token({"sub": user_id, "role": request.role})
+
+    return {"access_token": token, "token_type": "bearer"}
 
 # 儲存傷口紀錄
 # {"patient_id":"67d796801cc030761516faa5","title": "右腳掌傷口1","wound_location":"右腳掌"}

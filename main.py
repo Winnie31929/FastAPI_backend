@@ -357,10 +357,10 @@ async def update_wound(wound_id: str, update_data: dict):
 # 儲存 ML 預測結果
 """
 {
-    "wound_id": "67e54403282c561c2f8c0ffe",
-    "model_version": "v1",
-    "predicted_class": "N",
-    "predicted_severity": "W0",
+    "wound_id": "67da78f1bd148b1bd6b8d866",
+    "model_version": "v2",
+    "predicted_class": "D",
+    "predicted_severity": "W1",
     "predicted_treatment_suggestions": "No"
 }
 """
@@ -372,6 +372,12 @@ async def add_ml_prediction(prediction_json: str = Form(...), file: UploadFile =
     now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
     prediction_data = json.loads(prediction_json)  # 將 json 轉換成字典
     prediction_data["predicted_date"] = now_time
+    # 先建立一個空的修改欄位
+    prediction_data["corrected_by"] = None  # 醫生 ID
+    prediction_data["corrected_class"] = None  # 醫生更正的傷口類別
+    prediction_data["corrected_severity"] = None  # 醫生更正的傷口嚴重程度
+    prediction_data["corrected_treatment_suggestions"] = None
+    prediction_data["corrected_date"] = None  # 醫生更正的時間
 
     # 儲存已框出傷口邊界的圖片到 GridFS
     image_data = await file.read()  # 讀取圖片檔案

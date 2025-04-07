@@ -452,7 +452,7 @@ async def get_wound_list(patient_id: str):
     根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
     """
     # 1. 查詢病患的所有傷口記錄
-    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1, "title": 1}).to_list(length=100)
+    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1, "title": 1, "created_at":1}).to_list(length=100)
     if not records:
         raise HTTPException(status_code=404, detail="No wound records found for this patient")
     
@@ -460,6 +460,11 @@ async def get_wound_list(patient_id: str):
     wound_titles = [str(r["title"]) for r in records]
     # 取得 wound_id 清單
     wound_ids = [str(r["_id"]) for r in records]
+    # 取得 created_at
+    from datetime import datetime
+    # 將 created_at 轉換為 YYYY/MM/DD 格式
+    date = [r["created_at"].strftime("%Y/%m/%d") for r in records]
+
 
     # 2. 透過 wound_id 查詢 ML 預測結果
     ml_predictions = await collection_ml_predictions.find(
@@ -468,13 +473,14 @@ async def get_wound_list(patient_id: str):
             "_id": 0,
             "class": {"$ifNull": ["$corrected_class", "$predicted_class"]},
             "severity": {"$ifNull": ["$corrected_severity", "$predicted_severity"]},
-            "predicted_date": 1
         }
     ).to_list(length=100)
 
-    # 3. title 和 ML 預測結果合併
+    # 3. id, title, date 和 ML 預測結果合併
     for i in range(len(ml_predictions)):
+        ml_predictions[i]["wound_id"] = wound_ids[i]
         ml_predictions[i]["title"] = wound_titles[i]
+        ml_predictions[i]["date"] = date[i]
 
     return {"data": ml_predictions}
 

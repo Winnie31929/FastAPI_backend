@@ -329,32 +329,6 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
 
     return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
 
-# 更新傷口紀錄
-@app.put("/update_wound/{wound_id}/")
-async def update_wound(wound_id: str, update_data: dict):
-    """ 更新傷口紀錄 """
-
-    # 確保 wound_id 是合法的 MongoDB ObjectId
-    if not ObjectId.is_valid(wound_id):
-        raise HTTPException(status_code=400, detail="Invalid wound_id")
-
-    wound = await collection_wound_records.find_one({"_id": ObjectId(wound_id)})
-    if not wound:
-        raise HTTPException(status_code=404, detail="Wound record does not exist.")
-
-    # 轉換更新資料為字典
-    update_dict = dict(update_data)
-
-    # 更新時間戳
-    update_dict["updated_at"] = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
-
-    # 執行更新
-    await collection_wound_records.update_one(
-        {"_id": ObjectId(wound_id)},
-        {"$set": update_dict}
-    )
-
-    return {"message": "Wound record updated."}
 
 # 儲存 ML 預測結果
 """
@@ -418,31 +392,36 @@ async def correct_ml_prediction(correction: CorrectionRequest):
     )
 
     return {"message": "Add correct information successfully"}
-# 更改Wound_records的內容
-@app.put("/update_wound_records/")
-async def update_wound_records(wound_id: str, update_data: dict):
-    """ 更新傷口紀錄 """
-    # 確保 wound_id 是合法的 MongoDB ObjectId
-    if not ObjectId.is_valid(wound_id):
-        raise HTTPException(status_code=400, detail="Invalid wound_id")
 
-    wound = await collection_wound_records.find_one({"_id": ObjectId(wound_id)})
+class WoundRecordUpdate(BaseModel):
+    wound_id: str
+    modified_title: str
+    modified_location: str
+
+@app.put("/update_wound_records/")
+async def update_wound_records(data: WoundRecordUpdate):
+    """
+    更新傷口紀錄
+    """
+    # 確保 wound_id 存在於資料庫
+    wound = await collection_wound_records.find_one({"_id": ObjectId(data.wound_id)})
+    
     if not wound:
         raise HTTPException(status_code=404, detail="Wound record does not exist.")
-
-    # 轉換更新資料為字典
-    update_dict = dict(update_data)
-
     # 更新時間戳
-    update_dict["updated_at"] = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
-
+    update_dict = {
+        "title": data.modified_title,
+        "wound_location": data.modified_location,
+        "updated_at": datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
+    }
     # 執行更新
     await collection_wound_records.update_one(
-        {"_id": ObjectId(wound_id)},
+        {"_id": ObjectId(data.wound_id)},
         {"$set": update_dict}
     )
 
-    return {"message": "Wound record updated."}
+    return {"message": "Wound Recods updated successfully"}
+    
 
 # 獲取醫生所有的病患名字
 @app.get("/get_patients/{doctor_id}")

@@ -15,6 +15,8 @@ import re
 import json
 import jwt
 from jwt import PyJWTError
+import pandas as pd
+
 app = FastAPI()
 
 # 使用 motor 進行非同步連線
@@ -327,40 +329,14 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
 
     return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
 
-# 更新傷口紀錄
-@app.put("/update_wound/{wound_id}/")
-async def update_wound(wound_id: str, update_data: dict):
-    """ 更新傷口紀錄 """
-
-    # 確保 wound_id 是合法的 MongoDB ObjectId
-    if not ObjectId.is_valid(wound_id):
-        raise HTTPException(status_code=400, detail="Invalid wound_id")
-
-    wound = await collection_wound_records.find_one({"_id": ObjectId(wound_id)})
-    if not wound:
-        raise HTTPException(status_code=404, detail="Wound record does not exist.")
-
-    # 轉換更新資料為字典
-    update_dict = dict(update_data)
-
-    # 更新時間戳
-    update_dict["updated_at"] = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
-
-    # 執行更新
-    await collection_wound_records.update_one(
-        {"_id": ObjectId(wound_id)},
-        {"$set": update_dict}
-    )
-
-    return {"message": "Wound record updated."}
 
 # 儲存 ML 預測結果
 """
 {
-    "wound_id": "67e54403282c561c2f8c0ffe",
-    "model_version": "v1",
-    "predicted_class": "N",
-    "predicted_severity": "W0",
+    "wound_id": "67da78f1bd148b1bd6b8d866",
+    "model_version": "v2",
+    "predicted_class": "D",
+    "predicted_severity": "W1",
     "predicted_treatment_suggestions": "No"
 }
 """
@@ -372,6 +348,12 @@ async def add_ml_prediction(prediction_json: str = Form(...), file: UploadFile =
     now_time = datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))  # 獲取當前時間
     prediction_data = json.loads(prediction_json)  # 將 json 轉換成字典
     prediction_data["predicted_date"] = now_time
+    # 先建立一個空的修改欄位
+    prediction_data["corrected_by"] = None  # 醫生 ID
+    prediction_data["corrected_class"] = None  # 醫生更正的傷口類別
+    prediction_data["corrected_severity"] = None  # 醫生更正的傷口嚴重程度
+    prediction_data["corrected_treatment_suggestions"] = None
+    prediction_data["corrected_date"] = None  # 醫生更正的時間
 
     # 儲存已框出傷口邊界的圖片到 GridFS
     image_data = await file.read()  # 讀取圖片檔案
@@ -411,6 +393,36 @@ async def correct_ml_prediction(correction: CorrectionRequest):
 
     return {"message": "Add correct information successfully"}
 
+class WoundRecordUpdate(BaseModel):
+    wound_id: str
+    modified_title: str
+    modified_location: str
+
+@app.put("/update_wound_records/")
+async def update_wound_records(data: WoundRecordUpdate):
+    """
+    更新傷口紀錄
+    """
+    # 確保 wound_id 存在於資料庫
+    wound = await collection_wound_records.find_one({"_id": ObjectId(data.wound_id)})
+    
+    if not wound:
+        raise HTTPException(status_code=404, detail="Wound record does not exist.")
+    # 更新時間戳
+    update_dict = {
+        "title": data.modified_title,
+        "wound_location": data.modified_location,
+        "updated_at": datetime.now(tz=dt.timezone(dt.timedelta(hours=8)))
+    }
+    # 執行更新
+    await collection_wound_records.update_one(
+        {"_id": ObjectId(data.wound_id)},
+        {"$set": update_dict}
+    )
+
+    return {"message": "Wound Recods updated successfully"}
+    
+
 # 獲取醫生所有的病患名字
 @app.get("/get_patients/{doctor_id}")
 async def get_patients(doctor_id: str):
@@ -425,7 +437,7 @@ async def get_patients(doctor_id: str):
     # 取得 patient_id 清單
     patient_ids = [p["patient_id"] for p in patient_ids]
     if not patient_ids:
-        raise HTTPException(status_code=404, detail="No patients found for this doctor")
+        raise HTTPException(status_code=404, detail="No patients found for this doctor.")
 
     # 轉換 patient_id 為 ObjectId
     patient_object_ids = [ObjectId(patient_id) for patient_id in patient_ids]
@@ -446,31 +458,40 @@ async def get_wound_list(patient_id: str):
     根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
     """
     # 1. 查詢病患的所有傷口記錄
-    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1, "title": 1}).to_list(length=100)
+    records = await collection_wound_records.find({"patient_id": patient_id}, {"_id": 1, "title": 1, "created_at":1, "wound_location":1}).to_list(length=100)
     if not records:
-        raise HTTPException(status_code=404, detail="No wound records found for this patient")
+        raise HTTPException(status_code=404, detail="No wound records found for this patient.")
     
-    # 取得 title
-    wound_titles = [str(r["title"]) for r in records]
-    # 取得 wound_id 清單
-    wound_ids = [str(r["_id"]) for r in records]
+    # 將 records 轉成 DataFrame
+    df_records = pd.DataFrame(records)
+    # 將 _id 轉成字串（因為 MongoDB 的 ObjectId 不是 JSON serializable）
+    df_records["_id"] = df_records["_id"].astype(str)
+    # created_at 轉成字串格式
+    df_records["date"] = df_records["created_at"].dt.strftime("%Y/%m/%d")
+    # drop created_at 欄位
+    df_records.drop(columns=["created_at"], inplace=True)
 
     # 2. 透過 wound_id 查詢 ML 預測結果
     ml_predictions = await collection_ml_predictions.find(
-        {"wound_id": {"$in": wound_ids}},
+        {"wound_id": {"$in": df_records["_id"].tolist()}},
         {
             "_id": 0,
+            "wound_id": 1,
             "class": {"$ifNull": ["$corrected_class", "$predicted_class"]},
             "severity": {"$ifNull": ["$corrected_severity", "$predicted_severity"]},
-            "predicted_date": 1
         }
     ).to_list(length=100)
 
-    # 3. title 和 ML 預測結果合併
-    for i in range(len(ml_predictions)):
-        ml_predictions[i]["title"] = wound_titles[i]
+    df_predictions = pd.DataFrame(ml_predictions)
 
-    return {"data": ml_predictions}
+    # 將 _id 改名為 wound_id，方便合併
+    df_records.rename(columns={"_id": "wound_id"}, inplace=True)
+
+    # 合併紀錄與預測結果
+    df_merged = pd.merge(df_records, df_predictions, on="wound_id", how="left")
+
+
+    return {"data": df_merged.to_dict(orient="records")}
 
 # 根據傷口ID，獲取ML預測結果
 @app.get("/get_predicted_result/{wound_id}")

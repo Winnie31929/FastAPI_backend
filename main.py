@@ -16,6 +16,9 @@ import json
 import jwt
 from jwt import PyJWTError
 import pandas as pd
+from PIL import Image
+import numpy as np
+import tensorflow as tf
 
 app = FastAPI()
 
@@ -327,8 +330,34 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     # 儲存傷口記錄到 MongoDB
     result = await collection_wound_records.insert_one(wound_data)
 
-    return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
+    return {"inserted_id": str(result.inserted_id)}
 
+# 載入機器學習模型
+model = tf.keras.models.load_model("./wound_classification_model/vgg16_0218_test8_4class.h5")
+
+# 預處理函式
+def preprocess_image(image):
+    image = image.resize((256, 256))  # 調整大小
+    image = np.array(image) / 255.0   # 正規化
+    image = np.expand_dims(image, axis=0)  # 增加 batch 維度
+    return image
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    image = Image.open(io.BytesIO(await file.read()))  # 讀取圖片
+    processed_image = preprocess_image(image)
+
+    prediction = model.predict(processed_image)  # 進行分類
+    predicted_class = np.argmax(prediction)  # 取最大值的索引
+    if predicted_class == 0:
+        predicted_class_name = "Diabetic Ulcer"
+    elif predicted_class == 1:
+        predicted_class_name = "Pressure Ulcer"
+    elif predicted_class == 2:
+        predicted_class_name = "Surgical Ulcer"
+    elif predicted_class == 3:
+        predicted_class_name = "Venous Ulcer"
+    return {"prediction": predicted_class_name}
 
 # 儲存 ML 預測結果
 """
@@ -336,7 +365,7 @@ async def add_wound(wound_json: str = Form(...), file: UploadFile = File(...)):
     "wound_id": "67da78f1bd148b1bd6b8d866",
     "model_version": "v2",
     "predicted_class": "D",
-    "predicted_severity": "W1",
+    "predicted_severity": "紅W1 黃W2 藍W3",
     "predicted_treatment_suggestions": "No"
 }
 """
@@ -366,9 +395,9 @@ async def add_ml_prediction(prediction_json: str = Form(...), file: UploadFile =
     prediction_data["predicted_image_file_id"] = str(file_id)
 
     # 儲存ML預測結果到 MongoDB
-    result = await collection_ml_predictions.insert_one(prediction_data)
+    await collection_ml_predictions.insert_one(prediction_data)
 
-    return {"inserted_id": str(result.inserted_id), "image_file_id": str(file_id)}
+    return {"message": "ML prediction data saved successfully."}
 
 # ML預測結果加入醫生更正資訊
 @app.put("/correct_ml_prediction/")
@@ -492,6 +521,21 @@ async def get_wound_list(patient_id: str):
 
 
     return {"data": df_merged.to_dict(orient="records")}
+# 根據傷口ID，獲取傷口紀錄
+@app.get("/get_wound_record/{wound_id}")
+async def get_wound_record(wound_id: str):
+    """
+    根據傷口ID，獲取傷口紀錄
+    """
+    # 1. 查詢傷口紀錄
+    wound_record = await collection_wound_records.find_one({"_id": ObjectId(wound_id)}, {"_id": 0})
+    # 將created_at轉成yyyy/mm/dd格式
+    if wound_record and "created_at" in wound_record:
+        wound_record["created_at"] = wound_record["created_at"].strftime("%Y/%m/%d")
+    if not wound_record:
+        raise HTTPException(status_code=404, detail="No wound record found for this ID")
+
+    return wound_record
 
 # 根據傷口ID，獲取ML預測結果
 @app.get("/get_predicted_result/{wound_id}")

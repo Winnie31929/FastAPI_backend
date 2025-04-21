@@ -301,10 +301,8 @@ async def login(request: LoginRequest):
         raise HTTPException(status_code=400, detail=error_message)
     
     user_id = str(user["_id"])
-     # 產生 JWT Token
-    token = create_access_token({"sub": user_id, "role": request.role})
-
-    return {"access_token": token, "token_type": "bearer"}
+    
+    return {"message": user_id}
 
 # 儲存傷口紀錄
 # {"patient_id":"67d796801cc030761516faa5","title": "右腳掌傷口1","wound_location":"右腳掌"}

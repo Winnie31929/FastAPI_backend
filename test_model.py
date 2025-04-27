@@ -134,13 +134,55 @@ def visualize_classification(image, severity_map):
 
 
     return classified_image
+def process_wound_image_hsv(image_path, output_dir):
+    # 讀取原始影像 (BGR)
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        raise FileNotFoundError(f"找不到圖片：{image_path}")
+
+    # 轉成 RGB
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+    mask = get_wound_mask(image_rgb)
+
+    # 將 mask 二值化（確保只有 0 和 1）
+    _, mask = cv2.threshold(mask, 127, 1, cv2.THRESH_BINARY)
+    
+    # 分群分類（這是你新寫的）
+    severity_map = classify_wound_severity(image_rgb, mask, num_clusters=3)
+
+    # 視覺化分類結果
+    visual_result = visualize_classification(image_rgb, severity_map)
+
+    # 儲存結果
+    os.makedirs(output_dir, exist_ok=True)
+    overlay_path = os.path.join(output_dir, "overlay_result.png")
+    cv2.imwrite(overlay_path, cv2.cvtColor(visual_result, cv2.COLOR_RGB2BGR))
+
+    # 計算一些統計資訊（可選）
+    unique_classes = np.unique(severity_map)
+    unique_classes = unique_classes[unique_classes != 0]  # 去掉背景
+
+    wound_pixel_count = np.sum(mask)
+
+    # 印出或回傳結果
+    result = {
+        "classes_in_result": unique_classes.tolist(),
+        "wound_pixel_count": int(wound_pixel_count),
+        "overlay_path": overlay_path,
+    }
+
+    #rint("Processing result:", result)
+
+    return result
 
 # Example usage
 if __name__ == "__main__":
     image_path = "./photo/test_images/diabetic_foot_ulcer_0028.jpg"  # Replace with your image path
     
 
-    result = process_wound_image(image_path, "./photo/test_prediction/overlay_result3.png")
+    #result = process_wound_image(image_path, "./photo/test_prediction/overlay_result3.png")
+    result = process_wound_image_hsv(image_path, "./photo/test_prediction")
     print("Processing result:", result)
 
     # 顯示疊圖

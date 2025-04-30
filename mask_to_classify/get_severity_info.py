@@ -1,11 +1,10 @@
-
-#####只對傷口區域進行 #####
-
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
 
+# 得到傷口區域的 mask
 def get_wound_mask(image):
     # 載入預訓練模型
     weight_file_name = "2025-01-22_21-26-41.hdf5"  
@@ -25,36 +24,6 @@ def get_wound_mask(image):
 
     return binary_mask
 
-# 讀取影像
-image_path = "./photo/test_images/56_1.jpg"  # 影像路徑
-image = cv2.imread(image_path)
-mask = get_wound_mask(image)
-
-
-# 顯示結果
-cv2.imshow("Wound Mask", mask * 255)  # 乘 255 讓掩碼變白色
-cv2.waitKey(0)
-cv2.destroyAllWindows()
-
-#####可視化-左側是傷口原圖，右側是傷口mask位置 #####
-import matplotlib.pyplot as plt
-mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LINEAR)
-plt.figure(figsize=(6,6))
-plt.subplot(1,2,1)
-plt.imshow(image)  # 原圖
-plt.axis("off")
-
-plt.subplot(1,2,2)
-plt.imshow(mask, cmap="gray")  # 預測的傷口 mask
-plt.axis("off")
-
-plt.show()
-
-
-# 傷口掩碼 (來自 UNet / YOLO)
-
-mask = get_wound_mask(image)
-mask = (mask > 0.5).astype(np.uint8)  # 轉為 0-1 格式
 
 ##### 使用 HSV+KMeans分群 來分類傷口嚴重程度 #####
 
@@ -113,6 +82,12 @@ def visualize_classification(image, severity_map):
 
     return classified_image
 
+# 讀取影像
+image_path = "./photo/test_images/diabetic_foot_ulcer_0028.jpg"  # 影像路徑
+image = cv2.imread(image_path)
+mask = get_wound_mask(image) # 取得傷口區域的 mask
+mask = (mask > 0.5).astype(np.uint8)  # 轉為 0-1 格式
+
 # 假設你的影像是 RGB (H, W, 3)
 image_bgr = cv2.imread(image_path)
 image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -121,35 +96,6 @@ image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 severity_map = classify_wound_severity(image, mask, num_clusters=3)
 visual_result = +visualize_classification(image_rgb, severity_map)
 
-###### 顯示-三張圖(左-傷口原圖 中-mask 右-嚴重程度分類結果) 但還沒框出 #####
-plt.figure(figsize=(10, 5))
-plt.subplot(1, 3, 1)
-plt.imshow(image_rgb)
-plt.title("original")
-plt.axis("off")
-
-plt.subplot(1, 3, 2)
-plt.imshow(mask, cmap="gray")
-plt.title("mask")
-plt.axis("off")
-
-plt.subplot(1, 3, 3)
-plt.imshow(visual_result)
-plt.title("location")
-plt.axis("off")
-
-plt.tight_layout()
-plt.show()
-
-###疊合原圖後框出分類結果#####
-
-"""
-severity_colors = {
-    1: (0, 0, 255),    # W2 - 中度 (紅色) 
-    2: (255, 0, 0),    # W1 - 輕微 (藍色) 
-    3: (0, 255, 0),  # W0 - 快癒合 (綠色)
-}
-"""
 # 依一開始的顏色(BGR)
 severity_colors = {
     1: (255, 0, 0),     # W3 - 最嚴重(藍色)
@@ -165,7 +111,67 @@ for severity, color in severity_colors.items():
 # 讓邊框疊合原圖後，原圖顏色正常
 overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
+# 畫圖
+
 plt.figure(figsize=(6,6))
 plt.imshow(overlay_rgb)  # 用轉換後的圖
 plt.axis("off")
 plt.show()
+""""""
+# 需要回傳給前端的資料：1.有什麼嚴重程度w1、w2、w3 2.疊合後的圖
+# 封裝成函式
+import cv2
+import numpy as np
+from io import BytesIO
+from PIL import Image
+import base64
+
+def analyze_wound(image: np.ndarray):
+    # 取得 mask
+    mask = get_wound_mask(image)
+    mask = (mask > 0.5).astype(np.uint8)
+
+    # 轉成 RGB
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    # 分類傷口嚴重程度
+    severity_map = classify_wound_severity(image, mask, num_clusters=3)
+
+    # 標示傷口分類結果
+    visual_result = visualize_classification(image_rgb.copy(), severity_map)
+
+    # 畫輪廓用 BGR（再轉成 RGB 顯示）
+    severity_colors = {
+        1: (255, 0, 0),     # W3 - 最嚴重(藍色)
+        2: (0, 255, 255),   # W2 - 中度(黃色)
+        3: (0, 0, 255),     # W1 - 輕微(紅色)
+    }
+    overlay = image.copy()
+    for severity, color in severity_colors.items():
+        mask = (severity_map == severity).astype(np.uint8)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(overlay, contours, -1, color, thickness=1)
+
+    overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+
+    # 將圖轉為 base64 傳回
+    pil_img = Image.fromarray(overlay_rgb)
+    buffered = BytesIO()
+    pil_img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+    # 判斷有哪些嚴重程度存在
+    present_severities = sorted(list(set(np.unique(severity_map)) - {0}))  # 排除背景
+
+    severity_labels = {
+        1: "W3",  # 最嚴重
+        2: "W2",  # 中度
+        3: "W1",  # 輕微
+    }
+
+    present_labels = [severity_labels[s] for s in present_severities if s in severity_labels]
+
+    return {
+        "present_severities": present_labels,
+        "image_base64": img_str
+    }

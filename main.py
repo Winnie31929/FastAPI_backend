@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Form, Depends, Security
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import HTTPException
 from fastapi.security import OAuth2PasswordBearer
 import io
@@ -19,6 +19,9 @@ import pandas as pd
 from PIL import Image
 import numpy as np
 import tensorflow as tf
+import cv2
+
+from mask_to_classify.get_severity_info import analyze_wound
 
 app = FastAPI()
 
@@ -560,6 +563,18 @@ async def get_wound_image(file_id: str):
     # 透過 StreamingResponse 回傳圖片
     return StreamingResponse(io.BytesIO(image_data), media_type="image/jpeg")
 
+# 獲得傷口分級資訊
+@app.post("/analyze_wound/")
+async def analyze_wound_api(file: UploadFile = File(...)):
+    # 將上傳的圖片讀取成 OpenCV 格式
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    # 呼叫分析函式
+    result = analyze_wound(img)
+
+    return JSONResponse(content=result)
 
 if __name__ == "__main__":
     import uvicorn

@@ -81,9 +81,9 @@ def visualize_classification(image, severity_map):
     classified_image[severity_map == 3] = [255, 0, 0]    # 紅色(輕微)
 
     return classified_image
-
+"""
 # 讀取影像
-image_path = "./photo/test_images/diabetic_foot_ulcer_0028.jpg"  # 影像路徑
+image_path = "./photo/test_images/foot-ulcer-0028_dataset.png"  # 影像路徑
 image = cv2.imread(image_path)
 mask = get_wound_mask(image) # 取得傷口區域的 mask
 mask = (mask > 0.5).astype(np.uint8)  # 轉為 0-1 格式
@@ -117,7 +117,7 @@ plt.figure(figsize=(6,6))
 plt.imshow(overlay_rgb)  # 用轉換後的圖
 plt.axis("off")
 plt.show()
-""""""
+"""
 # 需要回傳給前端的資料：1.有什麼嚴重程度w1、w2、w3 2.疊合後的圖
 # 封裝成函式
 import cv2
@@ -150,7 +150,7 @@ def analyze_wound(image: np.ndarray):
     for severity, color in severity_colors.items():
         mask = (severity_map == severity).astype(np.uint8)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(overlay, contours, -1, color, thickness=1)
+        cv2.drawContours(overlay, contours, -1, color, thickness=2)
 
     overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 

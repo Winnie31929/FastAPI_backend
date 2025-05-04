@@ -10,7 +10,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from passlib.context import CryptContext
 import datetime as dt
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import re
 import json
 import jwt
@@ -481,6 +481,32 @@ async def get_patients(doctor_id: str):
         
     return {"patients": patients}
 
+def convert_created_at_to_tw_date(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    將 MongoDB 查詢結果 DataFrame 中的 'created_at' 欄位轉換為台灣時區，
+    並新增格式化的 'date' 欄位（格式為 YYYY/MM/DD）。
+
+    參數：
+        df: 包含 'created_at' 欄位的 DataFrame
+
+    回傳：
+        處理後的 DataFrame（新增 'date' 欄位）
+    """
+    tw_tz = timezone(timedelta(hours=8))
+
+    # 如果 'created_at' 為 datetime，但無 tzinfo，先設定為 UTC
+    df["created_at"] = df["created_at"].apply(
+        lambda x: x.replace(tzinfo=timezone.utc) if x.tzinfo is None else x
+    )
+
+    # 轉換為台灣時區
+    df["created_at"] = df["created_at"].apply(lambda x: x.astimezone(tw_tz))
+
+    # 新增 'date' 欄位，格式為 YYYY/MM/DD
+    df["date"] = df["created_at"].dt.strftime("%Y/%m/%d")
+
+    return df
+
 # 根據病患ID，獲取所有傷口記錄和其ML預測分類和分級結果（不包含圖片）
 @app.get("/get_wound_list/{patient_id}")
 async def get_wound_list(patient_id: str):
@@ -496,10 +522,13 @@ async def get_wound_list(patient_id: str):
     df_records = pd.DataFrame(records)
     # 將 _id 轉成字串（因為 MongoDB 的 ObjectId 不是 JSON serializable）
     df_records["_id"] = df_records["_id"].astype(str)
-    # created_at 轉成字串格式
-    df_records["date"] = df_records["created_at"].dt.strftime("%Y/%m/%d")
-    # drop created_at 欄位
+
+    # 將時區轉換為台灣時間，並新增 'date' 欄位
+    df_records = convert_created_at_to_tw_date(df_records)
+
+    # 刪除原本 created_at 欄位（如果你不需要留著）
     df_records.drop(columns=["created_at"], inplace=True)
+
 
     # 2. 透過 wound_id 查詢 ML 預測結果
     ml_predictions = await collection_ml_predictions.find(
@@ -530,9 +559,20 @@ async def get_wound_record(wound_id: str):
     """
     # 1. 查詢傷口紀錄
     wound_record = await collection_wound_records.find_one({"_id": ObjectId(wound_id)}, {"_id": 0})
-    # 將created_at轉成yyyy/mm/dd格式
+    # 將 created_at 轉成 yyyy/mm/dd 格式
     if wound_record and "created_at" in wound_record:
-        wound_record["created_at"] = wound_record["created_at"].strftime("%Y/%m/%d")
+        utc_time = wound_record["created_at"]
+        
+        # 若缺少 tzinfo，補上 UTC 時區
+        if utc_time.tzinfo is None:
+            utc_time = utc_time.replace(tzinfo=timezone.utc)
+
+        # 轉換為台灣時間（UTC+8）
+        tw_timezone = timezone(timedelta(hours=8))
+        tw_time = utc_time.astimezone(tw_timezone)
+
+        # 格式化為字串
+        wound_record["created_at"] = tw_time.strftime("%Y/%m/%d")
     if not wound_record:
         raise HTTPException(status_code=404, detail="No wound record found for this ID")
 

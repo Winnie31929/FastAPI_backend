@@ -82,6 +82,7 @@ def visualize_classification(image, severity_map):
 
     return classified_image
 """
+# 測試用程式碼
 # 讀取影像
 image_path = "./photo/test_images/foot-ulcer-0028_dataset.png"  # 影像路徑
 image = cv2.imread(image_path)

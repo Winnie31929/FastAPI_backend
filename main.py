@@ -619,4 +619,4 @@ async def analyze_wound_api(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) #執行：uvicorn main:app --reload，並搜尋http://127.0.0.1:8000/docs
-
+# 實體機 uvicorn main:app --host 0.0.0.0 --port 8000

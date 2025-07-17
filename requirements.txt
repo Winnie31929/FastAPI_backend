@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+motor
+pillow
+opencv-python
+numpy
+pandas
+matplotlib
+scikit-learn
+tensorflow
+python-jose
+passlib[bcrypt]
+python-multipart

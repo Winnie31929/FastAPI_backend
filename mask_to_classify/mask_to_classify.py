@@ -26,7 +26,7 @@ def get_wound_mask(image):
     return binary_mask
 
 # 讀取影像
-image_path = "./photo/test_images/56_1.jpg"  # 影像路徑
+image_path = "./photo/test_images/foot-ulcer-0028_dataset.png"  # 影像路徑
 image = cv2.imread(image_path)
 mask = get_wound_mask(image)
 
@@ -158,14 +158,31 @@ severity_colors = {
 }
 overlay = image.copy()
 for severity, color in severity_colors.items():
-    mask = (severity_map == severity).astype(np.uint8)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    one_part_mask = (severity_map == severity).astype(np.uint8)
+    contours, _ = cv2.findContours(one_part_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(overlay, contours, -1, color, thickness=1)
 
 # 讓邊框疊合原圖後，原圖顏色正常
 overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
-plt.figure(figsize=(6,6))
-plt.imshow(overlay_rgb)  # 用轉換後的圖
+
+###### 顯示-三張圖(左-傷口原圖 中-mask 右-嚴重程度分類框) #####
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 3, 1)
+plt.imshow(image_rgb)
+plt.title("original")
 plt.axis("off")
+
+plt.subplot(1, 3, 2)
+plt.imshow(mask, cmap="gray")
+plt.title("mask")
+plt.axis("off")
+
+plt.subplot(1, 3, 3)
+plt.imshow(overlay_rgb)  # 用轉換後的圖
+plt.title("result")
+plt.axis("off")
+
+
+plt.tight_layout()
 plt.show()
